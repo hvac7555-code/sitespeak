@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SiteSpeak — منصة تعلم الإنجليزية</title>
+<meta name="description" content="SiteSpeak — منصة ذكية لتعلم الإنجليزية للعرب من A1 إلى C2، مع مسار الإنجليزية المهنية والهندسية MEP، مدرس محادثة بالذكاء الاصطناعي، ومزامنة بين الموبايل واللابتوب.">
+<meta name="theme-color" content="#0f766e">
+<meta name="application-name" content="SiteSpeak">
+<meta name="apple-mobile-web-app-title" content="SiteSpeak">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"></noscript>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="app">
+  <aside class="side" id="side"></aside>
+  <div class="drawer-bg" id="drawerBg"></div>
+  <div class="main">
+    <header class="topbar">
+      <button class="iconbtn menu-btn" id="menuBtn" aria-label="Menu">☰</button>
+      <div class="title" id="pageTitle"></div>
+      <span class="chip" id="chipLevel" title="CEFR"></span>
+      <span class="chip hide-sm" id="chipStreak"></span>
+      <span class="chip hide-sm" id="chipXp"></span>
+      <button class="iconbtn" id="langBtn" title="Language">ع/E</button>
+      <button class="iconbtn" id="themeBtn" title="Dark mode">🌙</button>
+    </header>
+    <div id="planBar"></div>
+    <main class="content" id="view"></main>
+  </div>
+  <nav class="bottom" id="bottomNav"></nav>
+  <button class="fab" id="fab" title="المترجم / Translator" aria-label="Translator">🌐</button>
+</div>
+<script src="content.js"></script>
+<script src="fast-content.js"></script>
+<script src="pron-ar.js"></script>
+<script src="ex-ar.js"></script>
+<script src="advanced-content.js"></script>
+<script src="blocks-ar.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
