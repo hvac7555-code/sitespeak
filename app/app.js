@@ -353,6 +353,7 @@
   const dayRec = (d = today()) => (S.days[d] = S.days[d] || { min: 0, xp: 0, tasks: {} });
   function markActive() {
     const d = today();
+    try { if (NATIVE && NATIVE.markStudied) NATIVE.markStudied(d); } catch (e) { }
     if (S.lastDay !== d) {
       S.streak = (S.lastDay && dayDiff(S.lastDay, d) === 1) ? S.streak + 1 : 1;
       S.lastDay = d;
@@ -1321,6 +1322,31 @@ Max 4 issues, short and practical.`);
         ${['We NEED the DRAWINGS by THURSDAY.', 'The PUMP is in the BASEMENT.', 'COULD you SEND me the REPORT?', 'I\'ve been WORKING in MEP for THIRTEEN YEARS.'].map(x => `<p class="en">${esc(x)} ${say(x.toLowerCase())}</p>`).join('')}</div>`;
     }
   };
+  /* Daily reminder: a phone notification at the learner's chosen time (Android app only) */
+  function remCard(el) {
+    if (!el) return;
+    const can = !!(NATIVE && NATIVE.setReminder);
+    let r = { on: false, h: 20, m: 0 };
+    try { if (can && NATIVE.getReminder) r = Object.assign(r, JSON.parse(NATIVE.getReminder() || '{}')); } catch (e) { }
+    const hhmm = String(r.h).padStart(2, '0') + ':' + String(r.m).padStart(2, '0');
+    el.innerHTML = `<div class="card"><h2>⏰ ${L('التذكير اليومي', 'Daily reminder')}</h2>${can ? `
+        <p class="small muted">${L('إشعار على الموبايل في الوقت اللي تختاره علشان تحافظ على سلسلة أيامك 🔥 — ومش هيوصلك في اليوم اللي ذاكرت فيه خلاص.', 'A phone notification at your chosen time to keep your streak 🔥 — skipped on days you already studied.')}</p>
+        <div class="row" style="align-items:center;flex-wrap:nowrap;gap:10px">
+          <label class="row" style="align-items:center;gap:6px;margin:0;flex-wrap:nowrap"><input type="checkbox" id="remOn" ${r.on ? 'checked' : ''} style="width:22px;height:22px"> ${L('شغّال', 'On')}</label>
+          <input type="time" id="remT" value="${hhmm}" class="en" style="max-width:140px;direction:ltr" ${r.on ? '' : 'disabled'}>
+        </div>
+        <div class="small" id="remS" style="margin-top:8px">${r.on ? '✅ ' + L('هيوصلك تذكير كل يوم الساعة', 'You will be reminded daily at') + ' <b class="en">' + hhmm + '</b>' : ''}</div>`
+      : `<p class="small muted">${L('التذكير اليومي متاح في تطبيق SiteSpeak على أندرويد (إصدار 3.1 أو أحدث). من الكمبيوتر تقدر تستخدم تذكير الموبايل.', 'The daily reminder is available in the SiteSpeak Android app (3.1+).')}</p>`}</div>`;
+    if (!can) return;
+    const apply = () => {
+      const on = $('#remOn', el).checked, t = ($('#remT', el).value || '20:00').split(':');
+      $('#remT', el).disabled = !on;
+      try { NATIVE.setReminder(on, parseInt(t[0], 10) || 0, parseInt(t[1], 10) || 0); } catch (e) { }
+      $('#remS', el).innerHTML = on ? '✅ ' + L('هيوصلك تذكير كل يوم الساعة', 'You will be reminded daily at') + ' <b class="en">' + esc($('#remT', el).value) + '</b>' : '⏸️ ' + L('التذكير متوقف', 'Reminder off');
+      toast(on ? '⏰ ' + L('اتظبط التذكير', 'Reminder set') : L('اتوقف التذكير', 'Reminder off'));
+    };
+    $('#remOn', el).onchange = apply; $('#remT', el).onchange = apply;
+  }
   function syncCard(el) {
     if (!el) return;
     const code = SYNC.code;
@@ -1902,7 +1928,7 @@ Rules: max 25 lines (choose the most useful if longer), 8–10 vocab chosen for 
 
   /* ---------- Engineering & MEP English ---------- */
   views.mep = v => {
-    const sets = ['hvac', 'fire', 'plumbing', 'electrical', 'construction', 'pm'].map(id => C.VOCAB_SETS.find(s => s.id === id));
+    const sets = ['hvac', 'fire', 'plumbing', 'electrical', 'construction', 'pm', ...(C.MEP_PLUS_SETS || [])].map(id => C.VOCAB_SETS.find(s => s.id === id)).filter(Boolean);
     let cur = 'hvac', q = '';
     const draw = () => {
       const set = sets.find(s => s.id === cur);
@@ -2184,6 +2210,7 @@ DATA: ${JSON.stringify({ week: { minutes: w.mins, activeDays: w.active, tasks: w
         <label>${L('سرعة النطق', 'Speech rate')}<select id="sr">${[0.7, 0.85, 0.95, 1, 1.15].map(r => `<option ${r === S.rate ? 'selected' : ''}>${r}</option>`).join('')}</select></label></div>
         <div class="row" style="margin-top:10px"><button class="btn sec sm" id="stest">🔊 ${L('جرّب الصوت', 'Test voice')}</button><span class="small muted">${TTS.ok ? TTS.voices.length + ' ' + L('صوت إنجليزي متاح على جهازك', 'English voices on this device') : L('النطق غير مدعوم', 'TTS unsupported')}</span></div></div>
       <div id="syncCard"></div>
+      <div id="remCard"></div>
       <div class="card"><h2>☁️ ${L('الحفظ والخدمات', 'Saving & services')}</h2>
         <table><tr><td>${L('حفظ التقدم في السحابة (خاص بك)', 'Cloud progress (private)')}</td><td>${{ on: '✅ ' + L('مفعّل', 'On'), off: '⚠️ ' + L('غير متاح — الحفظ على هذا الجهاز فقط', 'Unavailable — this device only'), connecting: '⏳', slow: '⚠️ ' + L('بطيء — سيُعاد المحاولة', 'Slow'), signin: '🔗 ' + L('غير مربوط — اربط جهازك من بطاقة المزامنة بالأعلى', 'Not linked — use the sync card above') }[Store.cloud]}</td></tr>
         <tr><td>${L('المزامنة بين الموبايل واللابتوب', 'Sync between phone & laptop')}</td><td>${Store.ref ? '✅ ' + L('مباشرة — التقدم يظهر على الجهاز الآخر خلال ثوانٍ', 'Live') : '⚠️ ' + L('اربط أجهزتك بكود المزامنة من البطاقة بالأعلى', 'Link your devices with a sync code (card above)')}</td></tr>
@@ -2192,7 +2219,7 @@ DATA: ${JSON.stringify({ week: { minutes: w.mins, activeDays: w.active, tasks: w
         <tr><td>${L('تحويل النص لصوت', 'Text-to-speech')}</td><td>${TTS.ok ? '✅ ' + L('من المتصفح', 'Browser') : '❌'}</td></tr>
         <tr><td>${L('تحويل الصوت لنص', 'Speech-to-text')}</td><td>${NATIVE ? '✅ ' + L('ميكروفون تطبيق SiteSpeak', 'SiteSpeak app microphone') : STT.Rec && !STT.blocked ? '🟡 ' + L('قد يعمل حسب أذونات المتصفح', 'May work, depends on permissions') : '⚠️ ' + L('استخدم الإملاء الصوتي في لوحة المفاتيح', 'Use keyboard dictation')}</td></tr></table>
         <div class="row" style="margin-top:12px"><button class="btn sec sm" id="sexp">📋 ${L('انسخ نسخة احتياطية', 'Copy backup')}</button><button class="btn sec sm" id="simp">📥 ${L('استرجع من نسخة', 'Restore backup')}</button><button class="btn danger sm" id="sreset">🗑️ ${L('ابدأ من جديد', 'Reset all')}</button></div></div>`;
-    syncCard($('#syncCard', v));
+    syncCard($('#syncCard', v)); remCard($('#remCard', v));
     const bind = (id, k, f = x => x, re) => { $(id, v).onchange = e => { S[k] = f(e.target.value); save(); if (re) { renderShell(); route(); } else renderChips(); }; };
     $('#sn', v).oninput = e => { S.name = e.target.value; save(); };
     bind('#sg', 'goal', x => { delete dayRec().newWords; return x; }); bind('#sl', 'level', x => { delete dayRec().newWords; return x; }); bind('#sw', 'newPerDay', x => { delete dayRec().newWords; return +x; });
