@@ -54,6 +54,7 @@
       y.tasks = Object.assign({}, x.tasks || {}, y.tasks || {}); if (!y.newWords && x.newWords) y.newWords = x.newWords;
     });
     r.hardWords = Object.assign({}, o.hardWords || {}, r.hardWords || {});
+    r.podcast = Object.assign({}, o.podcast || {}, r.podcast || {});
     r.srs = r.srs || {};
     Object.entries(o.srs || {}).forEach(([k, x]) => { const y = r.srs[k]; if (!y || (x.seen || 0) > (y.seen || 0)) r.srs[k] = x; });
     ['grammarDone', 'readingDone', 'levelTests'].forEach(f => { r[f] = r[f] || {}; Object.entries(o[f] || {}).forEach(([k, v]) => { r[f][k] = Math.max(r[f][k] == null ? -1 : r[f][k], v); }); });
@@ -330,7 +331,7 @@
   const ROUTES = [
     ['home', '🏠', 'الرئيسية', 'Home Dashboard', 0], ['fast', '🚀', 'المسار السريع 90 يوم', 'Fast Track 90', 0], ['plan', '🗓️', 'خطتي التعليمية', 'My Learning Plan', 0], ['levels', '🪜', 'المستويات', 'English Levels', 0],
     ['translate', '🌐', 'المترجم', 'Translator', 1], ['tutor', '🤖', 'المحادثة مع المدرس', 'AI Conversation', 1], ['vocab', '📚', 'المفردات', 'Vocabulary', 1], ['grammar', '✍️', 'القواعد', 'Grammar', 1],
-    ['listening', '🎧', 'الاستماع', 'Listening', 1], ['pron', '🗣️', 'النطق', 'Pronunciation', 1], ['reading', '📖', 'القراءة', 'Reading', 1], ['blocks', '📦', 'بلوكات الكلام', 'Speaking Blocks', 1], ['video', '🎬', 'التعلم من الفيديو', 'Learn from Video', 1], ['writing', '📝', 'الكتابة والترجمة', 'Writing', 1],
+    ['listening', '🎧', 'الاستماع', 'Listening', 1], ['podcast', '🎙️', 'البودكاست', 'Podcast', 1], ['pron', '🗣️', 'النطق', 'Pronunciation', 1], ['reading', '📖', 'القراءة', 'Reading', 1], ['blocks', '📦', 'بلوكات الكلام', 'Speaking Blocks', 1], ['video', '🎬', 'التعلم من الفيديو', 'Learn from Video', 1], ['writing', '📝', 'الكتابة والترجمة', 'Writing', 1],
     ['business', '💼', 'الإنجليزية المهنية', 'Business English', 2], ['mep', '🔧', 'الإنجليزية الهندسية MEP', 'Engineering & MEP English', 2], ['site', '🦺', 'محاكي التواصل في الموقع', 'Site Communication', 2],
     ['emails', '📧', 'الإيميلات والتقارير', 'Professional Emails', 2], ['interview', '🤝', 'محاكي المقابلات', 'Interview Simulator', 2],
     ['tests', '🧪', 'الاختبارات والتقييم', 'Tests & Assessments', 3], ['progress', '📈', 'تقدمي', 'My Progress', 3], ['settings', '⚙️', 'الإعدادات', 'Settings', 3], ['install', '📲', 'ثبّت التطبيق', 'Install app', 3]
@@ -718,7 +719,7 @@ Include at most 6 mistakes and 4 better_phrases. Be honest but encouraging. Arab
       </div>
       <h3 style="margin:8px 0 10px">${L('تدريب سريع', 'Quick practice')}</h3>
       <div class="grid g4">
-        ${[['tutor', '🤖', 'محادثة مع المدرس', 'Talk to the tutor'], ['site', '🦺', 'محاكي الموقع', 'Site simulator'], ['interview', '🤝', 'مقابلة عمل', 'Job interview'], ['emails', '📧', 'إيميل احترافي', 'Pro email'], ['mep', '🔧', 'مصطلحات MEP', 'MEP terms'], ['grammar', '✍️', 'قواعد', 'Grammar'], ['listening', '🎧', 'استماع', 'Listening'], ['pron', '🗣️', 'نطق', 'Pronunciation']]
+        ${[['tutor', '🤖', 'محادثة مع المدرس', 'Talk to the tutor'], ['site', '🦺', 'محاكي الموقع', 'Site simulator'], ['interview', '🤝', 'مقابلة عمل', 'Job interview'], ['emails', '📧', 'إيميل احترافي', 'Pro email'], ['mep', '🔧', 'مصطلحات MEP', 'MEP terms'], ['grammar', '✍️', 'قواعد', 'Grammar'], ['listening', '🎧', 'استماع', 'Listening'], ['pron', '🗣️', 'نطق', 'Pronunciation'], ['podcast', '🎙️', 'بودكاست', 'Podcast']]
         .map(t => `<button class="tile" data-go="${t[0]}"><div class="big">${t[1]}</div><b>${L(t[2], t[3])}</b></button>`).join('')}
       </div>`;
     const s = $('#skipA1', v); if (s) s.onclick = () => { S.level = 'A1'; save(); renderChips(); route(); };
@@ -1289,6 +1290,88 @@ Max 4 issues, short and practical.`);
 
   /* ---------- Pronunciation ---------- */
   let pronTab = 'pairs';
+  /* ---------- Podcast: original episodes, read line by line in two accents ---------- */
+  const POD = {
+    ep: null, i: 0, playing: false, token: 0, rate: 1, showAr: false, listenOnly: false,
+    stop() { this.playing = false; this.token++; TTS.stop(); },
+  };
+  window.addEventListener('hashchange', () => { if (POD.playing) POD.stop(); });
+  const podData = () => window.PODCAST || { hosts: {}, episodes: [] };
+  const podRec = id => { S.podcast = S.podcast || {}; return (S.podcast[id] = S.podcast[id] || { line: 0, done: false }); };
+  const podGuest = ep => String(ep.guest || 'Guest').split(',')[0].trim();
+  const podMins = ep => Math.max(2, Math.round(ep.lines.reduce((a, l) => a + l[1].split(' ').length, 0) / 130));
+  views.podcast = v => {
+    POD.stop();
+    const P = podData();
+    v.innerHTML = `<div class="card"><h2>🎙️ ${L('بودكاست SiteSpeak', 'SiteSpeak Podcast')}</h2>
+        <p class="muted small">${L('حلقات قصيرة بصوتين ولكنتين مختلفتين عن شغل مهندسي MEP: اسمع، تابع النص، شوف الترجمة لما تحتاجها، وجاوب على أسئلة الفهم في الآخر.', 'Short two-voice episodes about MEP work: listen, follow the transcript, check the translation when needed, then answer the questions.')}</p></div>
+      <div class="grid g2">${P.episodes.map(ep => { const r = (S.podcast || {})[ep.id] || {}; return `<button class="tile" data-ep="${ep.id}" style="text-align:start">
+        <div class="row between"><span class="small muted">🎙️ ${L('حلقة', 'Episode')} ${ep.n} · ${ep.level} · ${podMins(ep)} ${L('د', 'min')}</span><span class="small">${r.done ? '✅' + (r.quiz != null ? ' ' + r.quiz + '%' : '') : r.line ? '⏯️ ' + L('كمّل', 'Continue') : ''}</span></div>
+        <b class="en" style="display:block;margin-top:4px">${esc(ep.title)}</b><div>${esc(ep.ar)}</div>
+        <div class="small muted en">🎧 Sarah & ${esc(ep.guest)}</div></button>`; }).join('')}</div>`;
+    $$('[data-ep]', v).forEach(b => b.onclick = () => podEpisode(v, P.episodes.find(e => e.id === b.dataset.ep)));
+  };
+  function podEpisode(v, ep) {
+    POD.stop(); POD.ep = ep; const rec = podRec(ep.id); POD.i = rec.done ? 0 : Math.min(rec.line || 0, ep.lines.length - 1);
+    const P = podData(), voice = s => (P.hosts[s] || {}).voice || 'en-US', who = s => s === 'H' ? 'Sarah' : podGuest(ep);
+    v.innerHTML = `<div class="card"><div class="row between"><button class="btn ghost sm" id="pdBack">← ${L('كل الحلقات', 'All episodes')}</button><span class="small muted">${ep.level} · ${podMins(ep)} ${L('دقائق', 'min')}</span></div>
+        <h2 style="margin:8px 0 2px">🎙️ ${L('حلقة', 'Episode')} ${ep.n}: <span class="en">${esc(ep.title)}</span></h2><div class="muted">${esc(ep.ar)} · <span class="en">${esc(ep.guest)}</span></div>
+        <div class="row" style="margin-top:12px;align-items:center;gap:8px">
+          <button class="btn sec" id="pdPrev" title="${L('السطر السابق', 'Previous line')}">⏮</button>
+          <button class="btn" id="pdPlay" style="min-width:110px">▶️ ${L('تشغيل', 'Play')}</button>
+          <button class="btn sec" id="pdNext" title="${L('السطر التالي', 'Next line')}">⏭</button>
+          <select id="pdRate" title="${L('السرعة', 'Speed')}" style="width:auto">${[0.75, 0.9, 1, 1.15].map(r => `<option value="${r}" ${r === POD.rate ? 'selected' : ''}>${r}×</option>`).join('')}</select>
+        </div>
+        <div style="height:6px;background:var(--surface2);border-radius:4px;margin-top:12px;overflow:hidden"><div id="pdBar" style="height:100%;width:0;background:var(--brand);transition:width .3s"></div></div>
+        <div class="row small" style="margin-top:10px;gap:14px">
+          <label class="row" style="gap:6px;margin:0;align-items:center"><input type="checkbox" id="pdAr" ${POD.showAr ? 'checked' : ''}> ${L('الترجمة العربية', 'Arabic translation')}</label>
+          <label class="row" style="gap:6px;margin:0;align-items:center"><input type="checkbox" id="pdHide" ${POD.listenOnly ? 'checked' : ''}> ${L('استماع فقط (اخفِ النص)', 'Listening only (hide text)')}</label>
+        </div></div>
+      <div class="card" id="pdLines">${ep.lines.map((l, k) => `<div class="pdl" data-l="${k}" style="padding:8px 10px;border-radius:10px;cursor:pointer;margin-bottom:4px">
+          <div class="small" style="font-weight:700;color:${l[0] === 'H' ? 'var(--brand)' : 'var(--accent)'}">${esc(who(l[0]))}</div>
+          <div class="en pdt">${esc(l[1])}</div><div class="pda small muted" dir="rtl">${esc(l[2] || '')}</div></div>`).join('')}</div>
+      <div class="card"><h3>📌 ${L('كلمات الحلقة', 'Key words')}</h3><div class="row">${(ep.words || []).map(w => `<span class="chip en">${esc(w)} ${say(w)}</span>`).join('')}</div>
+        <button class="btn" id="pdQuiz" style="margin-top:12px">❓ ${L('أسئلة الفهم', 'Comprehension quiz')}</button><div id="pdQ" style="margin-top:10px"></div></div>`;
+    const rows = $$('.pdl', v), btn = $('#pdPlay', v);
+    const paint = () => {
+      rows.forEach((r, k) => {
+        const on = k === POD.i; r.style.background = on ? 'var(--brandSoft)' : '';
+        $('.pdt', r).style.filter = POD.listenOnly && !on ? 'blur(5px)' : ''; $('.pda', r).style.display = POD.showAr ? '' : 'none';
+      });
+      $('#pdBar', v).style.width = Math.round(POD.i / Math.max(1, ep.lines.length - 1) * 100) + '%';
+      btn.innerHTML = POD.playing ? '⏸️ ' + L('إيقاف', 'Pause') : '▶️ ' + L('تشغيل', 'Play');
+    };
+    const finish = () => {
+      POD.playing = false; rec.done = true; rec.line = 0; addXP(rec.heard ? 2 : 10); rec.heard = true; save(); paint();
+      toast('🎉 ' + L('خلصت الحلقة — جاوب على أسئلة الفهم', 'Episode finished — try the quiz'));
+      $('#pdQuiz', v).scrollIntoView({ behavior: 'smooth', block: 'center' });
+    };
+    const playLine = () => {
+      const t = ++POD.token, l = ep.lines[POD.i]; paint();
+      const row = rows[POD.i]; if (row) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      rec.line = POD.i; save();
+      TTS.speak(l[1], { lang: voice(l[0]), rate: POD.rate, onend: () => {
+        if (t !== POD.token || !POD.playing) return;
+        if (POD.i >= ep.lines.length - 1) { finish(); return; }
+        POD.i++; setTimeout(() => { if (t === POD.token && POD.playing) playLine(); }, 450);
+      } });
+    };
+    const go = k => { const was = POD.playing; POD.stop(); POD.i = Math.max(0, Math.min(ep.lines.length - 1, k)); if (was) { POD.playing = true; playLine(); } else { rec.line = POD.i; save(); paint(); } };
+    btn.onclick = () => { if (POD.playing) { POD.stop(); paint(); } else { POD.playing = true; playLine(); } };
+    $('#pdPrev', v).onclick = () => go(POD.i - 1);
+    $('#pdNext', v).onclick = () => go(POD.i + 1);
+    rows.forEach((r, k) => r.onclick = () => { POD.stop(); POD.i = k; POD.playing = true; playLine(); });
+    $('#pdRate', v).onchange = e => { POD.rate = parseFloat(e.target.value) || 1; if (POD.playing) go(POD.i); };
+    $('#pdAr', v).onchange = e => { POD.showAr = e.target.checked; paint(); };
+    $('#pdHide', v).onchange = e => { POD.listenOnly = e.target.checked; paint(); };
+    $('#pdBack', v).onclick = () => { POD.stop(); route(); };
+    $('#pdQuiz', v).onclick = () => {
+      POD.stop(); paint();
+      runQuiz($('#pdQ', v), (ep.q || []).map(q => ({ type: 'mc', q: q[0], options: q[1], answer: q[2] })), { title: ep.title, src: 'podcast',
+        onDone: p => { rec.quiz = Math.max(rec.quiz || 0, p); setSkill('listening', p); addXP(10); doneTask('listening'); save(); } });
+    };
+    paint();
+  }
   views.pron = v => {
     const tabs = [['pairs', '👂 ' + L('التمييز بين الأصوات', 'Minimal pairs')], ['shadow', '🔁 ' + L('تمارين Shadowing', 'Shadowing')], ['stress', '🎵 ' + L('النبر والإيقاع', 'Stress & rhythm')], ['hard', '🎯 ' + L('كلماتي الصعبة', 'My hard words') + (activeHard().length ? ' (' + activeHard().length + ')' : '')]];
     v.innerHTML = `<div class="note">ℹ️ ${L('صراحةً: المنصة لا تحلل الصوت لتقييم دقة النطق علمياً. تقيس قدرتك على تمييز الأصوات بالسمع، وإذا كان التعرف على الكلام متاحاً في متصفحك، تقارن ما فُهم من كلامك بالجملة المستهدفة.', 'Honest note: no acoustic pronunciation scoring; we test sound discrimination and, if speech recognition is available, compare what was recognised.')}</div>
