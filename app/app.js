@@ -346,6 +346,24 @@
     go(t.route);
     if (k === 'grammar') setTimeout(() => { if (current === 'grammar') { grammarLesson($('#view'), nextGrammar()); planBar(); } }, 60);
   }
+  /* Hard words: every word that comes out wrong in a speaking check is remembered across sessions.
+     Saying it right 3 times in a row (after the last miss) marks it as mastered. */
+  const HARD_SKIP = new Set(['a', 'an', 'the', 'to', 'of', 'and', 'in', 'on', 'at', 'is', 'it', 'i', 'be', 'or']);
+  function hardWords() { return (S.hardWords = S.hardWords || {}); }
+  function trackWords(ops) {
+    const H = hardWords(), d = today();
+    ops.forEach(o => {
+      const k = String(o.w || '').toLowerCase();
+      if (!k || k.length < 2 || HARD_SKIP.has(k)) return;
+      if (o.t === 'sub' || o.t === 'del') {
+        const r = H[k] || (H[k] = { miss: 0, ok: 0, heard: '' });
+        r.miss++; r.ok = 0; r.last = d; r.done = false; if (o.h) r.heard = o.h;
+      } else if (o.t === 'ok' && H[k] && !H[k].done) {
+        H[k].ok++; H[k].last = d; if (H[k].ok >= 3) { H[k].done = true; toast('🏆 ' + L('أتقنت نطق', 'Mastered') + ' "' + k + '"'); }
+      }
+    });
+  }
+  const activeHard = () => Object.entries(hardWords()).filter(([, r]) => !r.done).sort((a, b) => b[1].miss - a[1].miss || (b[1].last || '').localeCompare(a[1].last || ''));
   function addMistake(m) { S.mistakes.unshift(Object.assign({ d: today(), n: 0 }, m)); if (S.mistakes.length > 150) S.mistakes.length = 150; save(); }
   function setSkill(k, v) { v = Math.max(0, Math.min(100, Math.round(v))); S.skills[k] = S.skills[k] == null ? v : Math.round(S.skills[k] * 0.6 + v * 0.4); save(); }
   let badgeSeen = null;
@@ -1207,6 +1225,7 @@ Return ONLY JSON: {"items":[{"q":"sentence with ___","options":["a","b","c"],"an
         <div class="small muted" style="margin-top:8px">ℹ️ ${L('التصحيح مبني على ما فهمه التعرف على الكلام من صوتك؛ إذا خرجت كلمة مختلفة فغالباً نطقها يحتاج تحسين.', 'Correction is based on what speech recognition understood from your voice.')}</div>`;
       $$('[data-slow]', out).forEach(b => b.onclick = e => { e.stopPropagation(); TTS.speak(b.dataset.slow, { rate: 0.6 }); });
       setSkill('pronunciation', acc); if (attempts === 1) addXP(4);
+      trackWords(ops); save();
       if (acc < 90) addMistake({ src: opt.src || 'pronunciation', wrong: said, right: target, ar: 'نطق: ' + wrong.map(o => o.w).join('، ') });
       if (wrong.length && AI.ok()) aiFeedback(said, wrong);
       opt.onResult && opt.onResult(acc, best, attempts);
@@ -1229,7 +1248,7 @@ Max 4 issues, short and practical.`);
   /* ---------- Pronunciation ---------- */
   let pronTab = 'pairs';
   views.pron = v => {
-    const tabs = [['pairs', '👂 ' + L('التمييز بين الأصوات', 'Minimal pairs')], ['shadow', '🔁 ' + L('تمارين Shadowing', 'Shadowing')], ['stress', '🎵 ' + L('النبر والإيقاع', 'Stress & rhythm')]];
+    const tabs = [['pairs', '👂 ' + L('التمييز بين الأصوات', 'Minimal pairs')], ['shadow', '🔁 ' + L('تمارين Shadowing', 'Shadowing')], ['stress', '🎵 ' + L('النبر والإيقاع', 'Stress & rhythm')], ['hard', '🎯 ' + L('كلماتي الصعبة', 'My hard words') + (activeHard().length ? ' (' + activeHard().length + ')' : '')]];
     v.innerHTML = `<div class="note">ℹ️ ${L('صراحةً: المنصة لا تحلل الصوت لتقييم دقة النطق علمياً. تقيس قدرتك على تمييز الأصوات بالسمع، وإذا كان التعرف على الكلام متاحاً في متصفحك، تقارن ما فُهم من كلامك بالجملة المستهدفة.', 'Honest note: no acoustic pronunciation scoring; we test sound discrimination and, if speech recognition is available, compare what was recognised.')}</div>
       <div class="card" style="margin-top:10px;padding:12px"><b>${L('دليل النطق بالحروف العربية', 'Arabic-script guide')}</b>${legend()}</div>
       <div class="tabs" style="margin-top:12px">${tabs.map(t => `<button class="tab ${t[0] === pronTab ? 'on' : ''}" data-t="${t[0]}">${t[1]}</button>`).join('')}</div><div id="pb"></div>`;
@@ -1252,6 +1271,8 @@ Max 4 issues, short and practical.`);
         setTimeout(() => TTS.speak(s), 300);
       };
       draw();
+    } else if (pronTab === 'hard') {
+      hardWordsView(box);
     } else {
       const p = C.PRONUNCIATION.find(x => x.id === 'p-stress');
       box.innerHTML = `<div class="card"><h3 class="en">${esc(p.title)}</h3><p>${esc(p.ar)}</p><table>${p.pairs.map(pr => `<tr>${pr.map(w => `<td class="en"><b>${esc(w)}</b> ${say(w.toLowerCase())}${pa(w)}</td>`).join('')}</tr>`).join('')}</table></div>
@@ -1259,6 +1280,42 @@ Max 4 issues, short and practical.`);
         ${['We NEED the DRAWINGS by THURSDAY.', 'The PUMP is in the BASEMENT.', 'COULD you SEND me the REPORT?', 'I\'ve been WORKING in MEP for THIRTEEN YEARS.'].map(x => `<p class="en">${esc(x)} ${say(x.toLowerCase())}</p>`).join('')}</div>`;
     }
   };
+  function hardWordsView(box) {
+    const list = activeHard(), mastered = Object.values(hardWords()).filter(r => r.done).length;
+    const tab = document.querySelector('[data-t="hard"]');
+    if (tab) tab.textContent = '🎯 ' + L('كلماتي الصعبة', 'My hard words') + (list.length ? ' (' + list.length + ')' : '');
+    if (!list.length) {
+      box.innerHTML = `<div class="card"><h2>🎯 ${L('كلماتي الصعبة', 'My hard words')}</h2>
+        <p>${mastered ? '🏆 ' + L('رائع! لا توجد كلمات صعبة حالياً — أتقنت', 'Great! No hard words right now — mastered') + ' ' + mastered + ' ' + L('كلمة.', 'words.') : L('لسه مفيش كلمات هنا. كل كلمة تنطقها غلط في أي تمرين نطق (Shadowing، بلوكات الكلام، المحادثة…) هتتجمع هنا تلقائياً علشان تتدرب عليها.', 'No words yet. Every word you mispronounce in any speaking exercise is collected here for practice.')}</p>
+        <button class="btn" id="hwGo">🔁 ${L('ابدأ Shadowing', 'Start shadowing')}</button></div>`;
+      $('#hwGo', box).onclick = () => { pronTab = 'shadow'; route(); };
+      return;
+    }
+    box.innerHTML = `<div class="card"><div class="row between"><h2>🎯 ${L('كلماتي الصعبة', 'My hard words')}</h2><button class="btn" id="hwDrill">🎤 ${L('تدرّب عليها', 'Practice them')}</button></div>
+        <p class="small muted">${L('كلمات خرجت غلط في تمارين النطق. قل الكلمة صح 3 مرات متتالية لتنتقل إلى "أتقنتها".', 'Words that came out wrong. Say a word right 3 times in a row to master it.')}${mastered ? ' · 🏆 ' + L('أتقنت', 'Mastered') + ': ' + mastered : ''}</p>
+        ${list.slice(0, 30).map(([w, r]) => `<div class="fixrow"><div class="row between" style="flex-wrap:nowrap">
+          <span><b class="en">${esc(w)}</b> <span class="small muted">· ${L('أخطأت', 'missed')} ${r.miss}×${r.heard ? ' · ' + L('سُمعت', 'heard') + ' <span class="en">' + esc(r.heard) + '</span>' : ''}</span></span>
+          <span class="row" style="gap:4px;flex-wrap:nowrap"><span class="small" title="${L('مرات صحيحة متتالية', 'correct in a row')}">${'●'.repeat(r.ok)}${'○'.repeat(3 - r.ok)}</span><button class="speak" data-say="${esc(w)}">🔊</button><button class="speak" data-slow="${esc(w)}">🐢</button></span></div>${pa(w)}</div>`).join('')}</div>`;
+    $$('[data-slow]', box).forEach(b => b.onclick = e => { e.stopPropagation(); TTS.speak(b.dataset.slow, { rate: 0.6 }); });
+    $('#hwDrill', box).onclick = () => hardDrill(box, list.slice(0, 10).map(x => x[0]));
+  }
+  function hardDrill(box, words) {
+    let i = 0;
+    const draw = () => {
+      if (i >= words.length) { toast('✅ ' + L('خلصت جولة التدريب', 'Round complete')); hardWordsView(box); return; }
+      const w = words[i], r = hardWords()[w] || { ok: 0 };
+      box.innerHTML = `<div class="card"><div class="row between"><h2>🎯 ${i + 1} / ${words.length}</h2><button class="btn ghost sm" id="hdBack">← ${L('القائمة', 'List')}</button></div>
+        <div class="flash" style="min-height:110px;cursor:default"><div class="en" style="font-size:30px;font-weight:700">${esc(w)}</div>${pa(w)}<div class="small" style="margin-top:6px">${'●'.repeat(r.ok || 0)}${'○'.repeat(3 - (r.ok || 0))}</div></div>
+        <div class="row" style="margin-top:12px;justify-content:center"><button class="btn" id="hdL">🔊 ${L('استمع', 'Listen')}</button><button class="btn sec" id="hdS">🐢 0.6×</button><button class="btn ghost" id="hdN">${L('التالية', 'Next')} ←</button></div>
+        <div id="hdRes" style="margin-top:12px"></div></div>`;
+      $('#hdL', box).onclick = () => TTS.speak(w); $('#hdS', box).onclick = () => TTS.speak(w, { rate: 0.6 });
+      $('#hdN', box).onclick = () => { i++; draw(); };
+      $('#hdBack', box).onclick = () => hardWordsView(box);
+      speakCheck($('#hdRes', box), w, { src: 'hard-words', onResult: acc => { if (acc >= 90) setTimeout(() => { i++; draw(); }, 1400); } });
+      setTimeout(() => TTS.speak(w), 300);
+    };
+    draw();
+  }
   function pairGame(box, p) {
     const qs = [...p.pairs, ...p.pairs].slice(0, 8).map(pr => { const k = Math.random() < .5 ? 0 : 1; return { type: 'mc', q: L('أي كلمة سمعت؟', 'Which word did you hear?'), options: [pr[0], pr[1]], answer: k, explain: p.ar, say: pr[k] }; });
     box.innerHTML = `<button class="btn ghost sm" id="bk">← ${L('رجوع', 'Back')}</button><div id="pg"></div>`;
