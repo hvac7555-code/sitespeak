@@ -53,6 +53,7 @@
       y.min = Math.max(y.min || 0, x.min || 0); y.xp = Math.max(y.xp || 0, x.xp || 0);
       y.tasks = Object.assign({}, x.tasks || {}, y.tasks || {}); if (!y.newWords && x.newWords) y.newWords = x.newWords;
     });
+    r.hardWords = Object.assign({}, o.hardWords || {}, r.hardWords || {});
     r.srs = r.srs || {};
     Object.entries(o.srs || {}).forEach(([k, x]) => { const y = r.srs[k]; if (!y || (x.seen || 0) > (y.seen || 0)) r.srs[k] = x; });
     ['grammarDone', 'readingDone', 'levelTests'].forEach(f => { r[f] = r[f] || {}; Object.entries(o[f] || {}).forEach(([k, v]) => { r[f][k] = Math.max(r[f][k] == null ? -1 : r[f][k], v); }); });
@@ -74,6 +75,33 @@
     return r;
   }
 
+  /* ------------------------------------------------------------
+     Sync code (Supabase): the same private code on two devices = one shared progress.
+     The code is the only key; the database stores progress under a hash of it.
+     ------------------------------------------------------------ */
+  const SYNC = {
+    url: 'https://facnuatcsjtqhglvofru.supabase.co/rest/v1/rpc/',
+    key: 'sb_publishable_xCJbE1kHfyFp-74aA7R2uA_kHXzF2J7',
+    get code() { try { return localStorage.getItem('ss-sync-code') || ''; } catch (e) { return ''; } },
+    setCode(c) { try { if (c) localStorage.setItem('ss-sync-code', c); else localStorage.removeItem('ss-sync-code'); } catch (e) { } },
+    clean(c) { const x = String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); return x.length === 12 ? x.match(/.{4}/g).join('-') : null; },
+    newCode() {
+      const A = '23456789ABCDEFGHJKMNPQRSTUVWXYZ', b = new Uint8Array(12); crypto.getRandomValues(b);
+      return Array.from(b, x => A[x % A.length]).join('').match(/.{4}/g).join('-');
+    },
+    async rpc(fn, body) {
+      const r = await fetch(this.url + fn, { method: 'POST', headers: { apikey: this.key, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (!r.ok) { const e = new Error('sync ' + r.status); e.code = r.status === 400 ? 'invalid_argument' : 'network'; throw e; }
+      const t = await r.text(); return t ? JSON.parse(t) : null;
+    },
+    ref(code) {
+      return {
+        get: async () => { const r = await SYNC.rpc('sync_get', { p_code: code }); return r && r.data ? { exists: true, data: () => r.data } : { exists: false }; },
+        set: body => SYNC.rpc('sync_put', { p_code: code, p_data: body, p_updated: body.updatedAt || 0 }),
+        onSnapshot: () => null  // no push channel: Store.pull() runs every 30 s and whenever the app returns to the screen
+      };
+    }
+  };
   const Store = {
     ref: null, sumRef: null, lastSum: '', lastSumAt: 0, cloud: 'off', saving: false, again: false, timer: null, unsub: null, lastWritten: 0, onRemote: null,
     loadLocal() { try { const r = localStorage.getItem('fluent-mep-state'); if (r) return JSON.parse(r); } catch (e) { } return null; },
@@ -81,7 +109,7 @@
     async init() {
       const local = this.loadLocal();
       if (local) S = Object.assign(DEFAULT(), local);
-      if (!(window.claude && window.claude.use)) { this.cloud = 'off'; return; }
+      if (!(window.claude && window.claude.use)) { if (SYNC.code) await this.connectCode(SYNC.code); else this.cloud = 'signin'; return; }
       this.cloud = 'connecting';
       try {
         const [db, user] = await Promise.all([window.claude.use('db'), window.claude.use('user')]);
@@ -99,6 +127,19 @@
         this.cloud = 'on';
         this.listen();
       } catch (e) { this.cloud = e && e.code === 'timeout' ? 'slow' : 'off'; }
+    },
+    /* Link this device to a sync code and merge local progress with the saved copy */
+    async connectCode(code) {
+      this.ref = SYNC.ref(code); this.sumRef = null; this.unsub = null; this.cloud = 'connecting';
+      try {
+        const snap = await Promise.race([this.ref.get(), new Promise((_, rej) => setTimeout(() => rej({ code: 'timeout' }), 10000))]);
+        if (snap && snap.exists) {
+          const remote = snap.data(), localNewer = (S.updatedAt || 0) > (remote.updatedAt || 0);
+          S = mergeState(S, remote); this.lastWritten = remote.updatedAt || 0; this.keepLocal();
+          if (localNewer) this.save();
+        } else this.save();
+        this.cloud = 'on'; return true;
+      } catch (e) { this.cloud = e && e.code === 'timeout' ? 'slow' : 'off'; return false; }
     },
     /* Live sync: progress made on the other device appears here automatically */
     listen() {
@@ -1280,6 +1321,48 @@ Max 4 issues, short and practical.`);
         ${['We NEED the DRAWINGS by THURSDAY.', 'The PUMP is in the BASEMENT.', 'COULD you SEND me the REPORT?', 'I\'ve been WORKING in MEP for THIRTEEN YEARS.'].map(x => `<p class="en">${esc(x)} ${say(x.toLowerCase())}</p>`).join('')}</div>`;
     }
   };
+  function syncCard(el) {
+    if (!el) return;
+    const code = SYNC.code;
+    const status = { on: '✅ ' + L('متزامن — أي تقدم هنا يظهر على جهازك التاني خلال دقيقة', 'Synced — progress shows on your other device within a minute'), connecting: '⏳ ' + L('جاري الاتصال…', 'Connecting…'), slow: '⚠️ ' + L('الاتصال بطيء — هيحاول تاني', 'Slow — will retry'), off: '⚠️ ' + L('مفيش اتصال — هيتزامن لما النت يرجع', 'Offline — will sync when back online') }[Store.cloud] || '';
+    el.innerHTML = code ? `<div class="card"><h2>🔄 ${L('المزامنة بين أجهزتك', 'Sync between your devices')}</h2>
+        <p>${L('الجهاز ده مربوط بكود المزامنة:', 'This device is linked with sync code:')}</p>
+        <div class="en" style="font-size:26px;font-weight:700;letter-spacing:2px;text-align:center;padding:10px;border:2px dashed var(--brand);border-radius:12px;direction:ltr">${esc(code)}</div>
+        <p class="small muted" style="margin-top:8px">${L('اكتب نفس الكود في الإعدادات على جهازك التاني (الموبايل أو الكمبيوتر) علشان يبقى تقدمك واحد. احتفظ بالكود لنفسك — أي حد معاه الكود يقدر يشوف تقدمك ويعدّله.', 'Enter the same code in Settings on your other device. Keep it private — anyone with it can see and change your progress.')}</p>
+        <div class="small">${status}</div>
+        <div class="row" style="margin-top:10px"><button class="btn sm" id="syNow">🔄 ${L('زامن الآن', 'Sync now')}</button><button class="btn sec sm" id="syCopy">📋 ${L('انسخ الكود', 'Copy code')}</button><button class="btn ghost sm" id="syOff">${L('إلغاء الربط على هذا الجهاز', 'Unlink this device')}</button></div></div>`
+      : `<div class="card"><h2>🔄 ${L('المزامنة بين أجهزتك', 'Sync between your devices')}</h2>
+        <p>${L('خلّي تقدمك واحد على الموبايل والكمبيوتر، ومحفوظ لو غيّرت الجهاز أو مسحت التطبيق — من غير إيميل ولا باسورد، بكود مزامنة خاص بيك.', 'One progress on phone and computer, safe if you change device — no email or password, just a private sync code.')}</p>
+        <button class="btn" id="syNew">✨ ${L('إنشاء كود مزامنة', 'Create a sync code')}</button>
+        <p class="small muted" style="margin:14px 0 6px">${L('عندك كود من جهاز تاني؟ اكتبه هنا:', 'Have a code from another device? Enter it here:')}</p>
+        <div class="row" style="flex-wrap:nowrap"><input id="syIn" class="en" placeholder="XXXX-XXXX-XXXX" maxlength="16" autocomplete="off" autocapitalize="characters" spellcheck="false" style="flex:1;min-width:0;text-transform:uppercase;letter-spacing:1px;direction:ltr"><button class="btn sec" id="syLink">🔗 ${L('اربط', 'Link')}</button></div></div>`;
+    const busy = (b, on) => { if (b) { b.disabled = on; b.style.opacity = on ? .6 : 1; } };
+    if (!code) {
+      $('#syNew', el).onclick = async e => {
+        busy(e.target, true);
+        const c = SYNC.newCode(); SYNC.setCode(c);
+        const ok = await Store.connectCode(c); if (ok) await Store.flush();
+        toast(ok ? '✅ ' + L('اتعمل كود المزامنة واتحفظ تقدمك', 'Sync code created and progress saved') : '⚠️ ' + L('اتعمل الكود — هيتحفظ التقدم أول ما النت يرجع', 'Code created — will save when online'));
+        route();
+      };
+      $('#syLink', el).onclick = async e => {
+        const c = SYNC.clean($('#syIn', el).value);
+        if (!c) { toast(L('الكود 12 حرف ورقم، زي: AB12-CD34-EF56', 'The code has 12 letters/digits, e.g. AB12-CD34-EF56')); return; }
+        busy(e.target, true);
+        try {
+          const snap = await SYNC.ref(c).get();
+          if (!snap.exists) { toast('❌ ' + L('الكود ده مش موجود — اتأكد منه من جهازك التاني', 'Code not found — check it on your other device')); busy(e.target, false); return; }
+        } catch (err) { toast('⚠️ ' + L('مفيش اتصال بالإنترنت — حاول تاني', 'No connection — try again')); busy(e.target, false); return; }
+        SYNC.setCode(c); await Store.connectCode(c); await Store.flush();
+        toast('✅ ' + L('اتربط الجهاز — تقدمك من الجهازين اتدمج', 'Linked — progress from both devices merged'));
+        renderShell(); route();
+      };
+    } else {
+      $('#syNow', el).onclick = async e => { busy(e.target, true); await Store.pull(); clearTimeout(Store.timer); Store.timer = null; await Store.flush(); toast(Store.cloud === 'on' ? '✅ ' + L('تمت المزامنة', 'Synced') : '⚠️ ' + L('مفيش اتصال — هيتزامن لما النت يرجع', 'Offline — will sync later')); renderShell(); route(); };
+      $('#syCopy', el).onclick = async () => { try { await navigator.clipboard.writeText(code); toast('📋 ' + L('اتنسخ الكود', 'Code copied')); } catch (e) { modal(L('كود المزامنة', 'Sync code'), `<p class="en" style="font-size:24px;font-weight:700;text-align:center;direction:ltr">${esc(code)}</p>`); } };
+      $('#syOff', el).onclick = () => modal(L('إلغاء الربط', 'Unlink'), `<p>${L('الجهاز ده هيبطّل يزامن. تقدمك هيفضل محفوظ عليه، وعلى الكود في السحابة. تقدر تربطه تاني بنفس الكود في أي وقت.', 'This device stops syncing. Progress stays here and in the cloud; you can relink with the same code anytime.')}</p>`, [[L('رجوع', 'Back'), null, 'sec'], [L('إلغاء الربط', 'Unlink'), () => { SYNC.setCode(''); Store.ref = null; Store.cloud = 'signin'; route(); }, 'danger']]);
+    }
+  }
   function hardWordsView(box) {
     const list = activeHard(), mastered = Object.values(hardWords()).filter(r => r.done).length;
     const tab = document.querySelector('[data-t="hard"]');
@@ -2100,14 +2183,16 @@ DATA: ${JSON.stringify({ week: { minutes: w.mins, activeDays: w.active, tasks: w
         <label>${L('النطق بالحروف العربية', 'Arabic-script pronunciation')}<select id="spa"><option value="1" ${S.showPA !== false ? 'selected' : ''}>${L('إظهار', 'Show')}</option><option value="0" ${S.showPA === false ? 'selected' : ''}>${L('إخفاء', 'Hide')}</option></select></label>
         <label>${L('سرعة النطق', 'Speech rate')}<select id="sr">${[0.7, 0.85, 0.95, 1, 1.15].map(r => `<option ${r === S.rate ? 'selected' : ''}>${r}</option>`).join('')}</select></label></div>
         <div class="row" style="margin-top:10px"><button class="btn sec sm" id="stest">🔊 ${L('جرّب الصوت', 'Test voice')}</button><span class="small muted">${TTS.ok ? TTS.voices.length + ' ' + L('صوت إنجليزي متاح على جهازك', 'English voices on this device') : L('النطق غير مدعوم', 'TTS unsupported')}</span></div></div>
+      <div id="syncCard"></div>
       <div class="card"><h2>☁️ ${L('الحفظ والخدمات', 'Saving & services')}</h2>
-        <table><tr><td>${L('حفظ التقدم في السحابة (خاص بك)', 'Cloud progress (private)')}</td><td>${{ on: '✅ ' + L('مفعّل', 'On'), off: '⚠️ ' + L('غير متاح — الحفظ على هذا الجهاز فقط', 'Unavailable — this device only'), connecting: '⏳', slow: '⚠️ ' + L('بطيء — سيُعاد المحاولة', 'Slow') }[Store.cloud]}</td></tr>
-        <tr><td>${L('المزامنة بين الموبايل واللابتوب', 'Sync between phone & laptop')}</td><td>${Store.ref ? '✅ ' + L('مباشرة — التقدم يظهر على الجهاز الآخر خلال ثوانٍ', 'Live') : '⚠️ ' + L('تعمل عند فتح المنصة من رابطها على Claude بنفس الحساب', 'Works via the Claude link with the same account')}</td></tr>
+        <table><tr><td>${L('حفظ التقدم في السحابة (خاص بك)', 'Cloud progress (private)')}</td><td>${{ on: '✅ ' + L('مفعّل', 'On'), off: '⚠️ ' + L('غير متاح — الحفظ على هذا الجهاز فقط', 'Unavailable — this device only'), connecting: '⏳', slow: '⚠️ ' + L('بطيء — سيُعاد المحاولة', 'Slow'), signin: '🔗 ' + L('غير مربوط — اربط جهازك من بطاقة المزامنة بالأعلى', 'Not linked — use the sync card above') }[Store.cloud]}</td></tr>
+        <tr><td>${L('المزامنة بين الموبايل واللابتوب', 'Sync between phone & laptop')}</td><td>${Store.ref ? '✅ ' + L('مباشرة — التقدم يظهر على الجهاز الآخر خلال ثوانٍ', 'Live') : '⚠️ ' + L('اربط أجهزتك بكود المزامنة من البطاقة بالأعلى', 'Link your devices with a sync code (card above)')}</td></tr>
         <tr><td>${L('ملخص التقدم اليومي لـ Claude', 'Daily progress summary for Claude')}</td><td>${Store.sumRef ? '✅ ' + L('يُحدّث تلقائياً — اسأل Claude في أي محادثة عن تقدمك', 'Auto-updated — ask Claude about your progress') : '⚠️ ' + L('يعمل عند فتح المنصة من رابطها على Claude', 'Works when opened from the Claude link')}</td></tr>
         <tr><td>${L('الذكاء الاصطناعي (Claude)', 'AI (Claude)')}</td><td>${AI.ok() ? '✅' : '⚠️ ' + L('غير متاح هنا', 'Unavailable here')}</td></tr>
         <tr><td>${L('تحويل النص لصوت', 'Text-to-speech')}</td><td>${TTS.ok ? '✅ ' + L('من المتصفح', 'Browser') : '❌'}</td></tr>
         <tr><td>${L('تحويل الصوت لنص', 'Speech-to-text')}</td><td>${NATIVE ? '✅ ' + L('ميكروفون تطبيق SiteSpeak', 'SiteSpeak app microphone') : STT.Rec && !STT.blocked ? '🟡 ' + L('قد يعمل حسب أذونات المتصفح', 'May work, depends on permissions') : '⚠️ ' + L('استخدم الإملاء الصوتي في لوحة المفاتيح', 'Use keyboard dictation')}</td></tr></table>
         <div class="row" style="margin-top:12px"><button class="btn sec sm" id="sexp">📋 ${L('انسخ نسخة احتياطية', 'Copy backup')}</button><button class="btn sec sm" id="simp">📥 ${L('استرجع من نسخة', 'Restore backup')}</button><button class="btn danger sm" id="sreset">🗑️ ${L('ابدأ من جديد', 'Reset all')}</button></div></div>`;
+    syncCard($('#syncCard', v));
     const bind = (id, k, f = x => x, re) => { $(id, v).onchange = e => { S[k] = f(e.target.value); save(); if (re) { renderShell(); route(); } else renderChips(); }; };
     $('#sn', v).oninput = e => { S.name = e.target.value; save(); };
     bind('#sg', 'goal', x => { delete dayRec().newWords; return x; }); bind('#sl', 'level', x => { delete dayRec().newWords; return x; }); bind('#sw', 'newPerDay', x => { delete dayRec().newWords; return +x; });
