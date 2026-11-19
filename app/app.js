@@ -2295,7 +2295,8 @@ DATA: ${JSON.stringify({ week: { minutes: w.mins, activeDays: w.active, tasks: w
       <div id="syncCard"></div>
       <div id="remCard"></div>
       <div class="card"><h2>☁️ ${L('الحفظ والخدمات', 'Saving & services')}</h2>
-        <table><tr><td>${L('حفظ التقدم في السحابة (خاص بك)', 'Cloud progress (private)')}</td><td>${{ on: '✅ ' + L('مفعّل', 'On'), off: '⚠️ ' + L('غير متاح — الحفظ على هذا الجهاز فقط', 'Unavailable — this device only'), connecting: '⏳', slow: '⚠️ ' + L('بطيء — سيُعاد المحاولة', 'Slow'), signin: '🔗 ' + L('غير مربوط — اربط جهازك من بطاقة المزامنة بالأعلى', 'Not linked — use the sync card above') }[Store.cloud]}</td></tr>
+        <table><tr><td>${L('نسخة المحتوى', 'Content version')}</td><td>${window.SS_BUILD ? '✅ ' + L('مباشرة من النت — بتتحدّث لوحدها', 'Live — updates automatically') + ' <span class="en small muted">(' + esc(String(window.SS_BUILD).replace(/^(\d{4})(\d\d)(\d\d)(\d\d)(\d\d).*/, '$1-$2-$3 $4:$5')) + ')</span>' : location.protocol === 'file:' ? '⚠️ ' + L('نسخة قديمة جوه التطبيق — مش بتتحدّث. نزّل آخر إصدار من hvac7555-code.github.io/sitespeak', 'Old copy inside the app — install the latest version') : '🧪 ' + L('نسخة تجريبية', 'Development copy')}</td></tr>
+        <tr><td>${L('حفظ التقدم في السحابة (خاص بك)', 'Cloud progress (private)')}</td><td>${{ on: '✅ ' + L('مفعّل', 'On'), off: '⚠️ ' + L('غير متاح — الحفظ على هذا الجهاز فقط', 'Unavailable — this device only'), connecting: '⏳', slow: '⚠️ ' + L('بطيء — سيُعاد المحاولة', 'Slow'), signin: '🔗 ' + L('غير مربوط — اربط جهازك من بطاقة المزامنة بالأعلى', 'Not linked — use the sync card above') }[Store.cloud]}</td></tr>
         <tr><td>${L('المزامنة بين الموبايل واللابتوب', 'Sync between phone & laptop')}</td><td>${Store.ref ? '✅ ' + L('مباشرة — التقدم يظهر على الجهاز الآخر خلال ثوانٍ', 'Live') : '⚠️ ' + L('اربط أجهزتك بكود المزامنة من البطاقة بالأعلى', 'Link your devices with a sync code (card above)')}</td></tr>
         <tr><td>${L('ملخص التقدم اليومي لـ Claude', 'Daily progress summary for Claude')}</td><td>${Store.sumRef ? '✅ ' + L('يُحدّث تلقائياً — اسأل Claude في أي محادثة عن تقدمك', 'Auto-updated — ask Claude about your progress') : '⚠️ ' + L('يعمل عند فتح المنصة من رابطها على Claude', 'Works when opened from the Claude link')}</td></tr>
         <tr><td>${L('الذكاء الاصطناعي (Claude)', 'AI (Claude)')}</td><td>${AI.ok() ? '✅' : '⚠️ ' + L('غير متاح هنا', 'Unavailable here')}</td></tr>
@@ -2715,6 +2716,26 @@ ${got.map((x, k) => `Q${k + 1}: ${x.q}\nA${k + 1}: ${x.a}`).join('\n\n')}`);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') Store.pull(); });
   setInterval(() => { if (document.visibilityState === 'visible' && Store.ref && !Store.unsub) Store.pull(); }, 30000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') { clearTimeout(Store.timer); Store.flush().then(() => Store.writeSummary(true)); } });
+
+  /* Live updates: if a newer version was published, save progress and reload into it.
+     Runs at start and every time the app/tab comes back to the screen (at most once a minute). */
+  (function liveUpdate() {
+    const mine = window.SS_BUILD; if (!mine || location.protocol === 'file:') return;
+    let last = 0;
+    const check = async () => {
+      if (Date.now() - last < 60000) return; last = Date.now();
+      try {
+        const r = await fetch('build.txt?nc=' + Date.now(), { cache: 'no-store' }); if (!r.ok) return;
+        const b = (await r.text()).trim();
+        if (!/^[0-9]{14}$/.test(b) || b <= mine) return;
+        if (new URLSearchParams(location.search).get('b') === b) return;   // never loop if the server is still catching up
+        clearTimeout(Store.timer); Store.timer = null; Store.keepLocal(); try { await Store.flush(); } catch (e) { }
+        location.replace(location.pathname.replace(/[^/]*$/, '') + 'index.html?b=' + b + location.hash);
+      } catch (e) { }
+    };
+    setTimeout(check, 1500);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') check(); });
+  })();
 
   // First paint immediately from local data, then upgrade when platform capabilities answer.
   const local = Store.loadLocal(); if (local) S = Object.assign(DEFAULT(), local);
